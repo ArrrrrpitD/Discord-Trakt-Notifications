@@ -236,7 +236,7 @@ def post_movie_to_discord(item):
         ],
         "footer": {
             "text": "Trakt  •  Infuse",
-            "icon_url": "https://trakt.tv/assets/logos/logomark.square.gradient-b644b16c38ff775861b4b1f58c1230f6a097a2466ab33ae00445a505c33fcb91.svg",
+            "icon_url": "https://i.ibb.co/6JbfjSKn/Trakt-TV.png",
         },
         "timestamp": watched_at.isoformat(),
     }
@@ -314,7 +314,7 @@ def post_episode_to_discord(item):
         ],
         "footer": {
             "text": "Trakt  •  Infuse",
-            "icon_url": "https://trakt.tv/assets/logos/logomark.square.gradient-b644b16c38ff775861b4b1f58c1230f6a097a2466ab33ae00445a505c33fcb91.svg",
+            "icon_url": "https://i.ibb.co/6JbfjSKn/Trakt-TV.png",
         },
         "timestamp": watched_at.isoformat(),
     }
