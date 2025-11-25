@@ -7,7 +7,7 @@ import os
 import time
 import json
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 
 # Configuration
@@ -16,6 +16,9 @@ TRAKT_ACCESS_TOKEN = os.getenv("TRAKT_ACCESS_TOKEN")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "3600"))  # 1 hour default
+LOOKBACK_HOURS = int(
+    os.getenv("LOOKBACK_HOURS", "24")
+)  # 24 hours default (changed from 12)
 POSTED_FILE = "data/posted_history.json"
 
 logging.basicConfig(
@@ -49,9 +52,9 @@ def save_posted(posted_list):
 
 def get_trakt_history():
     """Fetch watch history from Trakt"""
-    # Look back 12 hours
-    since = datetime.utcnow() - timedelta(hours=12)
-    since_iso = since.isoformat() + "Z"
+    # Look back configurable hours
+    since = datetime.now(timezone.utc) - timedelta(hours=LOOKBACK_HOURS)
+    since_iso = since.isoformat().replace("+00:00", "Z")
 
     url = f"https://api.trakt.tv/users/me/history?start_at={since_iso}&limit=50"
 
@@ -62,7 +65,7 @@ def get_trakt_history():
         "Authorization": f"Bearer {TRAKT_ACCESS_TOKEN}",
     }
 
-    logger.info(f"🔍 Fetching Trakt history since {since_iso}")
+    logger.info(f"🔍 Fetching Trakt history (last {LOOKBACK_HOURS} hours)")
 
     try:
         response = requests.get(url, headers=headers, timeout=15)
@@ -355,6 +358,7 @@ def main():
     """Main loop"""
     logger.info("🚀 Trakt Watch History Tracker started!")
     logger.info(f"📅 Checking every {CHECK_INTERVAL} seconds")
+    logger.info(f"🕐 Looking back {LOOKBACK_HOURS} hours for new watches")
 
     while True:
         try:
