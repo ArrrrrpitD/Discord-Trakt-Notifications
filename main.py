@@ -1,15 +1,17 @@
 """
 Trakt Watch History Tracker for Railway
 Posts your watch history to Discord
+Uses PostgreSQL for persistent storage
 """
 
 import os
 import time
-import json
 import requests
 from datetime import datetime, timedelta, timezone
 import logging
 import pytz
+import psycopg2
+from psycopg2.extras import execute_values
 
 # Configuration
 TRAKT_CLIENT_ID = os.getenv("TRAKT_CLIENT_ID")
@@ -17,10 +19,8 @@ TRAKT_ACCESS_TOKEN = os.getenv("TRAKT_ACCESS_TOKEN")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "3600"))  # 1 hour default
-LOOKBACK_HOURS = int(
-    os.getenv("LOOKBACK_HOURS", "24")
-)  # 24 hours default (changed from 12)
-POSTED_FILE = "data/posted_history.json"
+LOOKBACK_HOURS = int(os.getenv("LOOKBACK_HOURS", "24"))  # 24 hours default
+DATABASE_URL = os.getenv("DATABASE_URL")  # PostgreSQL connection string
 
 # Timezone configuration
 IST = pytz.timezone("Asia/Kolkata")
@@ -31,32 +31,108 @@ logging.basicConfig(
 logger = logging.getLogger("trakt-tracker")
 
 
-def ensure_data_dir():
-    """Create data directory if it doesn't exist"""
-    os.makedirs("data", exist_ok=True)
-    if not os.path.exists(POSTED_FILE):
-        with open(POSTED_FILE, "w") as f:
-            json.dump([], f)
-
-
-def load_posted():
-    """Load list of already posted items"""
+def get_db_connection():
+    """Get PostgreSQL database connection"""
     try:
-        with open(POSTED_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return []
+        conn = psycopg2.connect(DATABASE_URL)
+        return conn
+    except Exception as e:
+        logger.error(f"Database connection error: {e}")
+        return None
 
 
-def save_posted(posted_list):
-    """Save list of posted items"""
-    with open(POSTED_FILE, "w") as f:
-        json.dump(posted_list[-500:], f, indent=2)  # Keep last 500
+def init_database():
+    """Initialize database table"""
+    conn = get_db_connection()
+    if not conn:
+        logger.error("Failed to connect to database!")
+        return False
+
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS posted_history (
+                trakt_id BIGINT PRIMARY KEY,
+                posted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info("✅ Database initialized")
+        return True
+    except Exception as e:
+        logger.error(f"Database init error: {e}")
+        return False
+
+
+def is_posted(trakt_id):
+    """Check if item has already been posted"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM posted_history WHERE trakt_id = %s", (trakt_id,))
+        result = cur.fetchone() is not None
+        cur.close()
+        conn.close()
+        return result
+    except Exception as e:
+        logger.error(f"Error checking posted status: {e}")
+        return False
+
+
+def mark_as_posted(trakt_id):
+    """Mark item as posted"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO posted_history (trakt_id) VALUES (%s) ON CONFLICT (trakt_id) DO NOTHING",
+            (trakt_id,),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error(f"Error marking as posted: {e}")
+        return False
+
+
+def cleanup_old_entries():
+    """Clean up entries older than 30 days to keep database lean"""
+    conn = get_db_connection()
+    if not conn:
+        return
+
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            DELETE FROM posted_history 
+            WHERE posted_at < NOW() - INTERVAL '30 days'
+        """
+        )
+        deleted = cur.rowcount
+        conn.commit()
+        cur.close()
+        conn.close()
+        if deleted > 0:
+            logger.info(f"🧹 Cleaned up {deleted} old entries")
+    except Exception as e:
+        logger.error(f"Cleanup error: {e}")
 
 
 def get_trakt_history():
     """Fetch watch history from Trakt"""
-    # Look back configurable hours
     since = datetime.now(timezone.utc) - timedelta(hours=LOOKBACK_HOURS)
     since_iso = since.isoformat().replace("+00:00", "Z")
 
@@ -101,12 +177,10 @@ def fetch_tmdb_episode(show_id, season, episode):
         return None
 
     try:
-        # Get show poster
         show_url = f"https://api.themoviedb.org/3/tv/{show_id}?api_key={TMDB_API_KEY}"
         show_res = requests.get(show_url, timeout=10)
         show_data = show_res.json() if show_res.ok else {}
 
-        # Get episode details
         ep_url = f"https://api.themoviedb.org/3/tv/{show_id}/season/{season}/episode/{episode}?api_key={TMDB_API_KEY}"
         ep_res = requests.get(ep_url, timeout=10)
         if ep_res.ok:
@@ -138,7 +212,6 @@ def post_movie_to_discord(item):
     watched_at = watched_at.replace(tzinfo=timezone.utc)
     watched_at_ist = watched_at.astimezone(IST)
 
-    # Fetch TMDB data
     tmdb_data = None
     if movie.get("ids", {}).get("tmdb"):
         tmdb_data = fetch_tmdb_movie(movie["ids"]["tmdb"])
@@ -168,7 +241,6 @@ def post_movie_to_discord(item):
         "timestamp": watched_at.isoformat(),
     }
 
-    # Add poster/backdrop
     if tmdb_data:
         if tmdb_data.get("poster_path"):
             embed["thumbnail"] = {
@@ -179,7 +251,6 @@ def post_movie_to_discord(item):
                 "url": f"https://image.tmdb.org/t/p/original{tmdb_data['backdrop_path']}"
             }
 
-        # Add runtime
         if tmdb_data.get("runtime"):
             hours = tmdb_data["runtime"] // 60
             minutes = tmdb_data["runtime"] % 60
@@ -187,7 +258,6 @@ def post_movie_to_discord(item):
                 {"name": "⏱️ Runtime", "value": f"{hours}h {minutes}m", "inline": True}
             )
 
-        # Add rating
         if tmdb_data.get("vote_average"):
             embed["fields"].append(
                 {
@@ -197,7 +267,6 @@ def post_movie_to_discord(item):
                 }
             )
 
-        # Add genres
         if tmdb_data.get("genres"):
             genres = ", ".join([g["name"] for g in tmdb_data["genres"][:4]])
             embed["fields"].append(
@@ -215,7 +284,6 @@ def post_episode_to_discord(item):
     watched_at = watched_at.replace(tzinfo=timezone.utc)
     watched_at_ist = watched_at.astimezone(IST)
 
-    # Fetch TMDB data
     tmdb_data = None
     if show.get("ids", {}).get("tmdb"):
         tmdb_data = fetch_tmdb_episode(
@@ -235,7 +303,7 @@ def post_episode_to_discord(item):
     embed = {
         "title": f"📺 {show['title']}",
         "description": description,
-        "color": 0x5865F2,  # Blue for TV
+        "color": 0x5865F2,
         "url": f"https://trakt.tv/shows/{show['ids']['slug']}/seasons/{episode['season']}/episodes/{episode['number']}",
         "fields": [
             {
@@ -251,7 +319,6 @@ def post_episode_to_discord(item):
         "timestamp": watched_at.isoformat(),
     }
 
-    # Add images
     if tmdb_data:
         if tmdb_data.get("show_poster"):
             embed["thumbnail"] = {
@@ -262,7 +329,6 @@ def post_episode_to_discord(item):
                 "url": f"https://image.tmdb.org/t/p/w500{tmdb_data['still_path']}"
             }
 
-        # Add runtime
         if tmdb_data.get("runtime"):
             embed["fields"].append(
                 {
@@ -272,7 +338,6 @@ def post_episode_to_discord(item):
                 }
             )
 
-        # Add rating
         if tmdb_data.get("vote_average"):
             embed["fields"].append(
                 {
@@ -312,7 +377,10 @@ def check_and_post():
         logger.error("❌ Discord webhook not configured!")
         return
 
-    # Fetch history
+    if not DATABASE_URL:
+        logger.error("❌ Database not configured!")
+        return
+
     history = get_trakt_history()
     logger.info(f"📊 Found {len(history)} recent watch events")
 
@@ -320,20 +388,13 @@ def check_and_post():
         logger.info("No new watches found")
         return
 
-    # Load posted history
-    ensure_data_dir()
-    posted = load_posted()
-    posted_set = set(posted)
-
-    logger.info(f"📂 Currently tracking {len(posted)} posted items")
-
     new_count = 0
 
     # Process history (reverse to post oldest first)
     for item in reversed(history):
-        uid = str(item["id"])
+        trakt_id = item["id"]
 
-        if uid in posted_set:
+        if is_posted(trakt_id):
             continue
 
         try:
@@ -350,16 +411,13 @@ def check_and_post():
                 post_episode_to_discord(item)
                 new_count += 1
 
-            posted_set.add(uid)
-            time.sleep(0.5)  # Small delay between posts
+            mark_as_posted(trakt_id)
+            time.sleep(0.5)
 
         except Exception as e:
             logger.error(f"Error processing item: {e}")
 
-    # Save updated posted list
-    save_posted(list(posted_set))
-
-    logger.info(f"✨ Posted {new_count} new item(s)! Total tracked: {len(posted_set)}")
+    logger.info(f"✨ Posted {new_count} new item(s)!")
 
 
 def main():
@@ -367,6 +425,14 @@ def main():
     logger.info("🚀 Trakt Watch History Tracker started!")
     logger.info(f"📅 Checking every {CHECK_INTERVAL} seconds")
     logger.info(f"🕐 Looking back {LOOKBACK_HOURS} hours for new watches")
+
+    # Initialize database
+    if not init_database():
+        logger.error("Failed to initialize database. Exiting.")
+        return
+
+    # Run cleanup on startup
+    cleanup_old_entries()
 
     while True:
         try:
