@@ -9,6 +9,7 @@ import json
 import requests
 from datetime import datetime, timedelta, timezone
 import logging
+import pytz
 
 # Configuration
 TRAKT_CLIENT_ID = os.getenv("TRAKT_CLIENT_ID")
@@ -20,6 +21,9 @@ LOOKBACK_HOURS = int(
     os.getenv("LOOKBACK_HOURS", "24")
 )  # 24 hours default (changed from 12)
 POSTED_FILE = "data/posted_history.json"
+
+# Timezone configuration
+IST = pytz.timezone("Asia/Kolkata")
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -131,6 +135,8 @@ def post_movie_to_discord(item):
     """Post movie watch to Discord"""
     movie = item["movie"]
     watched_at = datetime.strptime(item["watched_at"], "%Y-%m-%dT%H:%M:%S.%fZ")
+    watched_at = watched_at.replace(tzinfo=timezone.utc)
+    watched_at_ist = watched_at.astimezone(IST)
 
     # Fetch TMDB data
     tmdb_data = None
@@ -151,13 +157,13 @@ def post_movie_to_discord(item):
         "fields": [
             {
                 "name": "🕐 Watched",
-                "value": watched_at.strftime("%b %d, %Y at %I:%M %p"),
+                "value": watched_at_ist.strftime("%b %d, %Y at %I:%M %p IST"),
                 "inline": True,
             }
         ],
         "footer": {
-            "text": "Trakt • via Infuse",
-            "icon_url": "https://walter.trakt.tv/hotlink-ok/public/favicon.ico",
+            "text": "Trakt  •  Infuse",
+            "icon_url": "https://trakt.tv/assets/logos/logomark.square.gradient-b644b16c38ff775861b4b1f58c1230f6a097a2466ab33ae00445a505c33fcb91.svg",
         },
         "timestamp": watched_at.isoformat(),
     }
@@ -206,6 +212,8 @@ def post_episode_to_discord(item):
     show = item["show"]
     episode = item["episode"]
     watched_at = datetime.strptime(item["watched_at"], "%Y-%m-%dT%H:%M:%S.%fZ")
+    watched_at = watched_at.replace(tzinfo=timezone.utc)
+    watched_at_ist = watched_at.astimezone(IST)
 
     # Fetch TMDB data
     tmdb_data = None
@@ -232,13 +240,13 @@ def post_episode_to_discord(item):
         "fields": [
             {
                 "name": "🕐 Watched",
-                "value": watched_at.strftime("%b %d, %Y at %I:%M %p"),
+                "value": watched_at_ist.strftime("%b %d, %Y at %I:%M %p IST"),
                 "inline": True,
             }
         ],
         "footer": {
-            "text": "Trakt • via Infuse",
-            "icon_url": "https://walter.trakt.tv/hotlink-ok/public/favicon.ico",
+            "text": "Trakt  •  Infuse",
+            "icon_url": "https://trakt.tv/assets/logos/logomark.square.gradient-b644b16c38ff775861b4b1f58c1230f6a097a2466ab33ae00445a505c33fcb91.svg",
         },
         "timestamp": watched_at.isoformat(),
     }
