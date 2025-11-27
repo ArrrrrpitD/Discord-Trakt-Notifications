@@ -299,7 +299,8 @@ def post_movie_to_discord(item):
         "url": f"https://trakt.tv/movies/{movie['ids']['slug']}",
         "fields": [],
         "footer": {
-            "text": f"Watched on {watched_at_ist.strftime('%b %d, %Y at %I:%M %p IST')}  •  via Infuse",
+            "text": "Trakt  •  Infuse",
+            "icon_url": "https://i.ibb.co/6JbfjSKn/Trakt-TV.png",
         },
         "timestamp": watched_at.isoformat(),
     }
@@ -316,7 +317,14 @@ def post_movie_to_discord(item):
             }
 
     # Build fields
-    # Row 1: Year, Runtime, Rating
+    # Row 1: Watch time
+    embed["fields"].append({
+        "name": "🕐 Watched",
+        "value": watched_at_ist.strftime("%b %d, %Y at %I:%M %p IST"),
+        "inline": False
+    })
+    
+    # Row 2: Year, Runtime, Rating
     if movie.get("year"):
         embed["fields"].append({
             "name": "📅 Year",
@@ -441,7 +449,8 @@ def post_episode_to_discord(item):
         "url": f"https://trakt.tv/shows/{show['ids']['slug']}/seasons/{episode['season']}/episodes/{episode['number']}",
         "fields": [],
         "footer": {
-            "text": f"Watched on {watched_at_ist.strftime('%b %d, %Y at %I:%M %p IST')}  •  via Infuse",
+            "text": "Trakt  •  Infuse",
+            "icon_url": "https://i.ibb.co/6JbfjSKn/Trakt-TV.png",
         },
         "timestamp": watched_at.isoformat(),
     }
@@ -458,7 +467,14 @@ def post_episode_to_discord(item):
             }
 
     # Build fields
-    # Row 1: Season/Episode, Runtime, Rating
+    # Row 1: Watch time
+    embed["fields"].append({
+        "name": "🕐 Watched",
+        "value": watched_at_ist.strftime("%b %d, %Y at %I:%M %p IST"),
+        "inline": False
+    })
+    
+    # Row 2: Season/Episode, Runtime, Rating
     embed["fields"].append({
         "name": "📺 Episode",
         "value": f"Season {episode['season']}, Ep. {episode['number']}",
