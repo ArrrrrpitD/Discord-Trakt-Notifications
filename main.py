@@ -162,7 +162,7 @@ def fetch_tmdb_movie(tmdb_id):
         return None
 
     try:
-        url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={TMDB_API_KEY}"
+        url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={TMDB_API_KEY}&append_to_response=credits"
         response = requests.get(url, timeout=10)
         if response.ok:
             return response.json()
@@ -181,11 +181,21 @@ def fetch_tmdb_episode(show_id, season, episode):
         show_res = requests.get(show_url, timeout=10)
         show_data = show_res.json() if show_res.ok else {}
 
-        ep_url = f"https://api.themoviedb.org/3/tv/{show_id}/season/{season}/episode/{episode}?api_key={TMDB_API_KEY}"
+        ep_url = f"https://api.themoviedb.org/3/tv/{show_id}/season/{season}/episode/{episode}?api_key={TMDB_API_KEY}&append_to_response=credits"
         ep_res = requests.get(ep_url, timeout=10)
         if ep_res.ok:
             ep_data = ep_res.json()
             ep_data["show_poster"] = show_data.get("poster_path")
+            
+            # Add network information
+            networks = show_data.get("networks", [])
+            if networks:
+                ep_data["show_network"] = networks[0]["name"]
+            
+            # Add guest stars from credits
+            if ep_data.get("credits") and ep_data["credits"].get("guest_stars"):
+                ep_data["guest_stars"] = ep_data["credits"]["guest_stars"]
+            
             return ep_data
     except Exception as e:
         logger.error(f"TMDB episode error: {e}")
@@ -195,14 +205,53 @@ def fetch_tmdb_episode(show_id, season, episode):
 def get_color_from_rating(rating):
     """Get Discord embed color based on rating"""
     if not rating:
-        return 0x5865F2  # Blue
+        return 0x5865F2  # Discord Blurple
+    if rating >= 9:
+        return 0x00D9FF  # Brilliant Cyan
     if rating >= 8:
-        return 0x57F287  # Green
+        return 0x00FF88  # Vibrant Green
+    if rating >= 7.5:
+        return 0xFFD700  # Gold
     if rating >= 7:
-        return 0xFEE75C  # Yellow
+        return 0xFFA500  # Orange
     if rating >= 6:
-        return 0xEB459E  # Pink
-    return 0xED4245  # Red
+        return 0xFF6B9D  # Pink
+    if rating >= 5:
+        return 0xFF69B4  # Hot Pink
+    return 0xFF4444  # Red
+
+
+def get_movie_color(genres):
+    """Get color based on movie genre"""
+    if not genres:
+        return 0x9B59B6  # Purple
+    
+    genre_colors = {
+        "Action": 0xFF4444,
+        "Adventure": 0xFF8C00,
+        "Animation": 0xFF69B4,
+        "Comedy": 0xFFD700,
+        "Crime": 0x8B0000,
+        "Documentary": 0x4682B4,
+        "Drama": 0x9370DB,
+        "Fantasy": 0x9400D3,
+        "Horror": 0x8B0000,
+        "Mystery": 0x483D8B,
+        "Romance": 0xFF1493,
+        "Sci-Fi": 0x00CED1,
+        "Thriller": 0xDC143C,
+    }
+    
+    for genre in genres:
+        if genre["name"] in genre_colors:
+            return genre_colors[genre["name"]]
+    
+    return 0x9B59B6  # Default purple
+
+
+def get_show_color():
+    """Get vibrant color for TV shows"""
+    return 0x00D9FF  # Electric cyan for TV shows
 
 
 def post_movie_to_discord(item):
@@ -216,31 +265,46 @@ def post_movie_to_discord(item):
     if movie.get("ids", {}).get("tmdb"):
         tmdb_data = fetch_tmdb_movie(movie["ids"]["tmdb"])
 
+    # Build description
+    description = ""
+    if tmdb_data and tmdb_data.get("tagline"):
+        description = f"*\"{tmdb_data['tagline']}\"*\n\n"
+    
+    if tmdb_data and tmdb_data.get("overview"):
+        overview = tmdb_data["overview"]
+        # Trim if too long
+        if len(overview) > 400:
+            overview = overview[:397] + "..."
+        description += overview
+    else:
+        description += "Just finished watching this movie! 🍿"
+
+    # Determine color
+    embed_color = get_color_from_rating(
+        tmdb_data.get("vote_average") if tmdb_data else None
+    )
+    
+    # Use genre-based color if rating color is default
+    if tmdb_data and embed_color == 0x5865F2 and tmdb_data.get("genres"):
+        embed_color = get_movie_color(tmdb_data["genres"])
+
     embed = {
-        "title": f"🎬 {movie['title']} ({movie.get('year', 'N/A')})",
-        "description": (
-            tmdb_data.get("overview", "Just finished watching this movie!")
-            if tmdb_data
-            else "Just finished watching!"
-        ),
-        "color": get_color_from_rating(
-            tmdb_data.get("vote_average") if tmdb_data else None
-        ),
-        "url": f"https://trakt.tv/movies/{movie['ids']['slug']}",
-        "fields": [
-            {
-                "name": "🕐 Watched",
-                "value": watched_at_ist.strftime("%b %d, %Y at %I:%M %p IST"),
-                "inline": True,
-            }
-        ],
-        "footer": {
-            "text": "Trakt  •  Infuse",
+        "author": {
+            "name": "Movie Night 🎬",
             "icon_url": "https://i.ibb.co/6JbfjSKn/Trakt-TV.png",
+        },
+        "title": f"{movie['title']}",
+        "description": description,
+        "color": embed_color,
+        "url": f"https://trakt.tv/movies/{movie['ids']['slug']}",
+        "fields": [],
+        "footer": {
+            "text": f"Watched on {watched_at_ist.strftime('%b %d, %Y at %I:%M %p IST')}  •  via Infuse",
         },
         "timestamp": watched_at.isoformat(),
     }
 
+    # Add poster and backdrop
     if tmdb_data:
         if tmdb_data.get("poster_path"):
             embed["thumbnail"] = {
@@ -251,27 +315,79 @@ def post_movie_to_discord(item):
                 "url": f"https://image.tmdb.org/t/p/original{tmdb_data['backdrop_path']}"
             }
 
-        if tmdb_data.get("runtime"):
-            hours = tmdb_data["runtime"] // 60
-            minutes = tmdb_data["runtime"] % 60
-            embed["fields"].append(
-                {"name": "⏱️ Runtime", "value": f"{hours}h {minutes}m", "inline": True}
-            )
+    # Build fields
+    # Row 1: Year, Runtime, Rating
+    if movie.get("year"):
+        embed["fields"].append({
+            "name": "📅 Year",
+            "value": str(movie["year"]),
+            "inline": True
+        })
+    
+    if tmdb_data and tmdb_data.get("runtime"):
+        hours = tmdb_data["runtime"] // 60
+        minutes = tmdb_data["runtime"] % 60
+        runtime_str = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
+        embed["fields"].append({
+            "name": "⏱️ Runtime",
+            "value": runtime_str,
+            "inline": True
+        })
 
-        if tmdb_data.get("vote_average"):
-            embed["fields"].append(
-                {
-                    "name": "⭐ Rating",
-                    "value": f"{tmdb_data['vote_average']:.1f}/10",
-                    "inline": True,
-                }
-            )
+    if tmdb_data and tmdb_data.get("vote_average"):
+        rating = tmdb_data["vote_average"]
+        stars = "⭐" * max(1, min(5, int(rating / 2)))
+        embed["fields"].append({
+            "name": "⭐ Rating",
+            "value": f"{rating:.1f}/10 {stars}",
+            "inline": True
+        })
 
-        if tmdb_data.get("genres"):
-            genres = ", ".join([g["name"] for g in tmdb_data["genres"][:4]])
-            embed["fields"].append(
-                {"name": "🎭 Genres", "value": genres, "inline": False}
-            )
+    # Row 2: Genres (full width for better display)
+    if tmdb_data and tmdb_data.get("genres"):
+        genres = " • ".join([g["name"] for g in tmdb_data["genres"][:5]])
+        embed["fields"].append({
+            "name": "🎭 Genres",
+            "value": genres,
+            "inline": False
+        })
+
+    # Row 3: Director and Cast
+    if tmdb_data and tmdb_data.get("credits"):
+        credits = tmdb_data["credits"]
+        
+        # Get director
+        directors = [c["name"] for c in credits.get("crew", []) if c.get("job") == "Director"]
+        if directors:
+            embed["fields"].append({
+                "name": "🎬 Director",
+                "value": ", ".join(directors[:2]),
+                "inline": True
+            })
+        
+        # Get top cast
+        cast = credits.get("cast", [])[:3]
+        if cast:
+            cast_names = ", ".join([c["name"] for c in cast])
+            embed["fields"].append({
+                "name": "🎭 Cast",
+                "value": cast_names,
+                "inline": True
+            })
+
+    # Add budget/revenue if available
+    if tmdb_data and tmdb_data.get("budget") and tmdb_data["budget"] > 0:
+        budget = tmdb_data["budget"]
+        if budget >= 1_000_000:
+            budget_str = f"${budget / 1_000_000:.1f}M"
+        else:
+            budget_str = f"${budget:,}"
+        
+        embed["fields"].append({
+            "name": "💰 Budget",
+            "value": budget_str,
+            "inline": True
+        })
 
     send_to_discord({"embeds": [embed]})
 
@@ -290,35 +406,47 @@ def post_episode_to_discord(item):
             show["ids"]["tmdb"], episode["season"], episode["number"]
         )
 
-    description = f"**Season {episode['season']}, Episode {episode['number']}**"
+    # Build description with episode name
+    description = f"**S{episode['season']:02d}E{episode['number']:02d}"
     if episode.get("title"):
-        description += f" - {episode['title']}"
+        description += f" • {episode['title']}**"
+    else:
+        description += "**"
     description += "\n\n"
 
     if tmdb_data and tmdb_data.get("overview"):
-        description += tmdb_data["overview"]
+        overview = tmdb_data["overview"]
+        # Trim if too long
+        if len(overview) > 350:
+            overview = overview[:347] + "..."
+        description += overview
     else:
-        description += "Just finished watching this episode!"
+        description += "Just finished watching this episode! 📺"
+
+    # Use vibrant cyan color for TV shows
+    embed_color = get_show_color()
+    
+    # Override with rating color if available
+    if tmdb_data and tmdb_data.get("vote_average"):
+        embed_color = get_color_from_rating(tmdb_data["vote_average"])
 
     embed = {
-        "title": f"📺 {show['title']}",
-        "description": description,
-        "color": 0x5865F2,
-        "url": f"https://trakt.tv/shows/{show['ids']['slug']}/seasons/{episode['season']}/episodes/{episode['number']}",
-        "fields": [
-            {
-                "name": "🕐 Watched",
-                "value": watched_at_ist.strftime("%b %d, %Y at %I:%M %p IST"),
-                "inline": True,
-            }
-        ],
-        "footer": {
-            "text": "Trakt  •  Infuse",
+        "author": {
+            "name": f"{show['title']} 📺",
             "icon_url": "https://i.ibb.co/6JbfjSKn/Trakt-TV.png",
+        },
+        "title": episode.get("title", f"Episode {episode['number']}"),
+        "description": description,
+        "color": embed_color,
+        "url": f"https://trakt.tv/shows/{show['ids']['slug']}/seasons/{episode['season']}/episodes/{episode['number']}",
+        "fields": [],
+        "footer": {
+            "text": f"Watched on {watched_at_ist.strftime('%b %d, %Y at %I:%M %p IST')}  •  via Infuse",
         },
         "timestamp": watched_at.isoformat(),
     }
 
+    # Add images
     if tmdb_data:
         if tmdb_data.get("show_poster"):
             embed["thumbnail"] = {
@@ -326,26 +454,63 @@ def post_episode_to_discord(item):
             }
         if tmdb_data.get("still_path"):
             embed["image"] = {
-                "url": f"https://image.tmdb.org/t/p/w500{tmdb_data['still_path']}"
+                "url": f"https://image.tmdb.org/t/p/original{tmdb_data['still_path']}"
             }
 
-        if tmdb_data.get("runtime"):
-            embed["fields"].append(
-                {
-                    "name": "⏱️ Runtime",
-                    "value": f"{tmdb_data['runtime']} min",
-                    "inline": True,
-                }
-            )
+    # Build fields
+    # Row 1: Season/Episode, Runtime, Rating
+    embed["fields"].append({
+        "name": "📺 Episode",
+        "value": f"Season {episode['season']}, Ep. {episode['number']}",
+        "inline": True
+    })
 
-        if tmdb_data.get("vote_average"):
-            embed["fields"].append(
-                {
-                    "name": "⭐ Rating",
-                    "value": f"{tmdb_data['vote_average']:.1f}/10",
-                    "inline": True,
-                }
-            )
+    if tmdb_data and tmdb_data.get("runtime"):
+        embed["fields"].append({
+            "name": "⏱️ Runtime",
+            "value": f"{tmdb_data['runtime']} min",
+            "inline": True
+        })
+
+    if tmdb_data and tmdb_data.get("vote_average"):
+        rating = tmdb_data["vote_average"]
+        stars = "⭐" * max(1, min(5, int(rating / 2)))
+        embed["fields"].append({
+            "name": "⭐ Rating",
+            "value": f"{rating:.1f}/10 {stars}",
+            "inline": True
+        })
+
+    # Row 2: Air date
+    if tmdb_data and tmdb_data.get("air_date"):
+        try:
+            air_date = datetime.strptime(tmdb_data["air_date"], "%Y-%m-%d")
+            embed["fields"].append({
+                "name": "📅 Air Date",
+                "value": air_date.strftime("%b %d, %Y"),
+                "inline": True
+            })
+        except:
+            pass
+
+    # Network information from show data
+    if tmdb_data and tmdb_data.get("show_network"):
+        embed["fields"].append({
+            "name": "📡 Network",
+            "value": tmdb_data["show_network"],
+            "inline": True
+        })
+
+    # Guest stars if available
+    if tmdb_data and tmdb_data.get("guest_stars"):
+        guests = tmdb_data["guest_stars"][:3]
+        if guests:
+            guest_names = ", ".join([g["name"] for g in guests])
+            embed["fields"].append({
+                "name": "⭐ Guest Stars",
+                "value": guest_names,
+                "inline": False
+            })
 
     send_to_discord({"embeds": [embed]})
 
