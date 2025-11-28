@@ -290,7 +290,7 @@ def post_movie_to_discord(item):
 
     embed = {
         "author": {
-            "name": "Movie Night 🎬",
+            "name": "Movie 🎬",
             "icon_url": "https://i.ibb.co/6JbfjSKn/Trakt-TV.png",
         },
         "title": f"{movie['title']}",
@@ -404,7 +404,7 @@ def post_episode_to_discord(item):
     """Post episode watch to Discord"""
     show = item["show"]
     episode = item["episode"]
-    watched_at = datetime.strptime(item["watched_at"], "%Y-%m-%dT%H:%M:%S.%fZ")
+    watched_at = datetime.strpxtime(item["watched_at"], "%Y-%m-%dT%H:%M:%S.%fZ")
     watched_at = watched_at.replace(tzinfo=timezone.utc)
     watched_at_ist = watched_at.astimezone(IST)
 
@@ -441,7 +441,6 @@ def post_episode_to_discord(item):
     embed = {
         "author": {
             "name": f"{show['title']} 📺",
-            "icon_url": "https://i.ibb.co/6JbfjSKn/Trakt-TV.png",
         },
         "title": episode.get("title", f"Episode {episode['number']}"),
         "description": description,
