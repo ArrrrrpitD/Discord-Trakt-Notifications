@@ -404,7 +404,7 @@ def post_episode_to_discord(item):
     """Post episode watch to Discord"""
     show = item["show"]
     episode = item["episode"]
-    watched_at = datetime.strpxtime(item["watched_at"], "%Y-%m-%dT%H:%M:%S.%fZ")
+    watched_at = datetime.strptime(item["watched_at"], "%Y-%m-%dT%H:%M:%S.%fZ")
     watched_at = watched_at.replace(tzinfo=timezone.utc)
     watched_at_ist = watched_at.astimezone(IST)
 
