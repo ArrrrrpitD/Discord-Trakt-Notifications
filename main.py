@@ -147,10 +147,15 @@ def load_tokens_from_db():
         conn.close()
 
         if result:
+            # Make sure expires_at is timezone-aware
+            expires_at = result[2]
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+
             return {
                 "access_token": result[0],
                 "refresh_token": result[1],
-                "expires_at": result[2],
+                "expires_at": expires_at,
             }
         return None
     except Exception as e:
